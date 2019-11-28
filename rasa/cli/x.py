@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import importlib.util
 import logging
+import warnings
 import os
 import signal
 import traceback
@@ -59,11 +60,11 @@ def _rasa_service(
 ):
     """Starts the Rasa application."""
     from rasa.core.run import serve_application
+    import rasa.utils.common
 
     # needs separate logging configuration as it is started in its own process
-    logging.basicConfig(level=args.loglevel)
+    rasa.utils.common.set_log_level(args.loglevel)
     io_utils.configure_colored_logging(args.loglevel)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
     if not credentials_path:
         credentials_path = _prepare_credentials_for_rasa_x(
@@ -79,6 +80,10 @@ def _rasa_service(
         enable_api=True,
         jwt_secret=args.jwt_secret,
         jwt_method=args.jwt_method,
+        ssl_certificate=args.ssl_certificate,
+        ssl_keyfile=args.ssl_keyfile,
+        ssl_ca_file=args.ssl_ca_file,
+        ssl_password=args.ssl_password,
     )
 
 
@@ -108,10 +113,24 @@ def _overwrite_endpoints_for_local_x(
     from rasa.utils.endpoints import EndpointConfig
     import questionary
 
+    # Checking if endpoint.yml has existing url and wait time values set, if so give
+    # warning we are overwriting the endpoint.yml file.
+    custom_wait_time_pulls = endpoints.model.kwargs.get("wait_time_between_pulls")
+    custom_url = endpoints.model.url
+    default_rasax_model_server_url = (
+        f"{rasa_x_url}/projects/default/models/tag/production"
+    )
+
+    if custom_url != default_rasax_model_server_url:
+        warnings.warn(
+            f"Ignoring url '{custom_url}' from 'endpoints.yml' and using "
+            f"'{default_rasax_model_server_url}' instead."
+        )
+
     endpoints.model = EndpointConfig(
-        "{}/projects/default/models/tags/production".format(rasa_x_url),
+        default_rasax_model_server_url,
         token=rasa_x_token,
-        wait_time_between_pulls=2,
+        wait_time_between_pulls=custom_wait_time_pulls or 2,
     )
 
     overwrite_existing_event_broker = False
@@ -149,7 +168,7 @@ def start_rasa_for_local_rasa_x(args: argparse.Namespace, rasa_x_token: Text):
     credentials_path, endpoints_path = _get_credentials_and_endpoints_paths(args)
     endpoints = AvailableEndpoints.read_endpoints(endpoints_path)
 
-    rasa_x_url = "http://localhost:{}/api".format(args.rasa_x_port)
+    rasa_x_url = f"http://localhost:{args.rasa_x_port}/api"
     _overwrite_endpoints_for_local_x(endpoints, rasa_x_token, rasa_x_url)
 
     vars(args).update(
@@ -216,8 +235,9 @@ def _configure_logging(args: argparse.Namespace):
         logging.getLogger("py.warnings").setLevel(logging.ERROR)
 
 
-def is_rasa_project_setup(project_path: Text):
-    mandatory_files = [DEFAULT_CONFIG_PATH, DEFAULT_DOMAIN_PATH]
+def is_rasa_project_setup(args: argparse.Namespace, project_path: Text) -> bool:
+    config_path = _get_config_path(args)
+    mandatory_files = [config_path, DEFAULT_DOMAIN_PATH]
 
     for f in mandatory_files:
         if not os.path.exists(os.path.join(project_path, f)):
@@ -245,7 +265,7 @@ def _validate_rasa_x_start(args: argparse.Namespace, project_path: Text):
             )
         )
 
-    if not is_rasa_project_setup(project_path):
+    if not is_rasa_project_setup(args, project_path):
         cli_utils.print_error_and_exit(
             "This directory is not a valid Rasa project. Use 'rasa init' "
             "to create a new Rasa project or switch to a valid Rasa project "
@@ -320,7 +340,7 @@ async def _pull_runtime_config_from_server(
                             "".format(resp.status, await resp.text())
                         )
         except aiohttp.ClientError as e:
-            logger.debug("Failed to connect to server. Retrying. {}".format(e))
+            logger.debug(f"Failed to connect to server. Retrying. {e}")
 
         await asyncio.sleep(wait_time_between_pulls)
         attempts -= 1
@@ -342,8 +362,16 @@ def run_in_production(args: argparse.Namespace):
     _rasa_service(args, endpoints, None, credentials_path)
 
 
+def _get_config_path(args: argparse.Namespace,) -> Optional[Text]:
+    config_path = cli_utils.get_validated_path(
+        args.config, "config", DEFAULT_CONFIG_PATH
+    )
+
+    return config_path
+
+
 def _get_credentials_and_endpoints_paths(
-    args: argparse.Namespace
+    args: argparse.Namespace,
 ) -> Tuple[Optional[Text], Optional[Text]]:
     config_endpoint = args.config_endpoint
     if config_endpoint:
@@ -376,10 +404,14 @@ def run_locally(args: argparse.Namespace):
     rasa_x_token = generate_rasa_x_token()
     process = start_rasa_for_local_rasa_x(args, rasa_x_token=rasa_x_token)
 
+    config_path = _get_config_path(args)
+
     try:
-        local.main(args, project_path, args.data, token=rasa_x_token)
+        local.main(
+            args, project_path, args.data, token=rasa_x_token, config_path=config_path
+        )
     except Exception:
-        print (traceback.format_exc())
+        print(traceback.format_exc())
         cli_utils.print_error(
             "Sorry, something went wrong (see error above). Make sure to start "
             "Rasa X with valid data and valid domain and config files. Please, "

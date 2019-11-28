@@ -10,12 +10,8 @@ from rasa.nlu.classifiers import LABEL_RANKING_LENGTH
 from rasa.nlu.components import Component
 from rasa.utils import train_utils
 from rasa.nlu.constants import (
-    MESSAGE_RESPONSE_ATTRIBUTE,
     MESSAGE_INTENT_ATTRIBUTE,
     MESSAGE_TEXT_ATTRIBUTE,
-    MESSAGE_TOKENS_NAMES,
-    MESSAGE_ATTRIBUTES,
-    MESSAGE_SPACY_FEATURES_NAMES,
     MESSAGE_VECTOR_FEATURE_NAMES,
 )
 
@@ -128,7 +124,7 @@ class EmbeddingIntentClassifier(Component):
     ) -> None:
         """Declare instant variables with default values"""
 
-        super(EmbeddingIntentClassifier, self).__init__(component_config)
+        super().__init__(component_config)
 
         self._load_params()
 
@@ -166,10 +162,13 @@ class EmbeddingIntentClassifier(Component):
         for removed_param in removed_tokenization_params:
             if removed_param in config:
                 warnings.warn(
-                    "Intent tokenization has been moved to Tokenizer components. "
-                    "Your config still mentions '{}'. Tokenization may fail if you specify the parameter here."
-                    "Please specify the parameter 'intent_tokenization_flag' and 'intent_split_symbol' in the "
-                    "tokenizer of your NLU pipeline".format(removed_param)
+                    f"Intent tokenization has been moved to Tokenizer components. "
+                    f"Your config still mentions '{removed_param}'. "
+                    f"Tokenization may fail if you specify the parameter here. "
+                    f"Please specify the parameter 'intent_tokenization_flag' "
+                    f"and 'intent_split_symbol' in the "
+                    f"tokenizer of your NLU pipeline",
+                    FutureWarning,
                 )
 
     # init helpers
@@ -185,7 +184,7 @@ class EmbeddingIntentClassifier(Component):
         ):
             raise ValueError(
                 "If hidden layer weights are shared,"
-                "hidden_layer_sizes for a and b must coincide"
+                "hidden_layer_sizes for a and b must coincide."
             )
 
         self.batch_size = config["batch_size"]
@@ -245,9 +244,9 @@ class EmbeddingIntentClassifier(Component):
     ) -> Dict[Text, int]:
         """Create label_id dictionary"""
 
-        distinct_label_ids = set(
-            [example.get(attribute) for example in training_data.intent_examples]
-        ) - {None}
+        distinct_label_ids = {
+            example.get(attribute) for example in training_data.intent_examples
+        } - {None}
         return {
             label_id: idx for idx, label_id in enumerate(sorted(distinct_label_ids))
         }
@@ -462,7 +461,7 @@ class EmbeddingIntentClassifier(Component):
         if self.share_hidden_layers:
             if session_data.X[0].shape[-1] != session_data.Y[0].shape[-1]:
                 raise ValueError(
-                    "If embeddings are shared "
+                    "If embeddings are shared, "
                     "text features and label features "
                     "must coincide. Check the output dimensions of previous components."
                 )
@@ -486,10 +485,9 @@ class EmbeddingIntentClassifier(Component):
 
         # check if number of negatives is less than number of label_ids
         logger.debug(
-            "Check if num_neg {} is smaller than "
-            "number of label_ids {}, "
-            "else set num_neg to the number of label_ids - 1"
-            "".format(self.num_neg, self._encoded_all_label_ids.shape[0])
+            f"Check if num_neg {self.num_neg} is smaller than "
+            f"number of label_ids {self._encoded_all_label_ids.shape[0]}, "
+            f"else set num_neg to the number of label_ids - 1."
         )
         # noinspection PyAttributeOutsideInit
         self.num_neg = min(self.num_neg, self._encoded_all_label_ids.shape[0] - 1)
@@ -510,7 +508,7 @@ class EmbeddingIntentClassifier(Component):
         self,
         training_data: "TrainingData",
         cfg: Optional["RasaNLUModelConfig"] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Train the embedding label classifier on a data set."""
 
@@ -604,7 +602,7 @@ class EmbeddingIntentClassifier(Component):
             logger.error(
                 "There is no trained tf.session: "
                 "component is either not trained or "
-                "didn't receive enough training data"
+                "didn't receive enough training data."
             )
 
         else:
@@ -695,7 +693,7 @@ class EmbeddingIntentClassifier(Component):
         model_dir: Text = None,
         model_metadata: "Metadata" = None,
         cached_component: Optional["EmbeddingIntentClassifier"] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> "EmbeddingIntentClassifier":
 
         if model_dir and meta.get("file"):
@@ -707,8 +705,8 @@ class EmbeddingIntentClassifier(Component):
 
             graph = tf.Graph()
             with graph.as_default():
-                session = tf.Session(config=_tf_config)
-                saver = tf.train.import_meta_graph(checkpoint + ".meta")
+                session = tf.compat.v1.Session(config=_tf_config)
+                saver = tf.compat.v1.train.import_meta_graph(checkpoint + ".meta")
 
                 saver.restore(session, checkpoint)
 
@@ -744,9 +742,8 @@ class EmbeddingIntentClassifier(Component):
             )
 
         else:
-            logger.warning(
-                "Failed to load nlu model. Maybe path {} "
-                "doesn't exist"
-                "".format(os.path.abspath(model_dir))
+            warnings.warn(
+                f"Failed to load nlu model. "
+                f"Maybe path '{os.path.abspath(model_dir)}' doesn't exist."
             )
             return cls(component_config=meta)

@@ -1,24 +1,33 @@
+from pathlib import Path
+import warnings
+
 import pytest
+from typing import Callable, Dict
+from _pytest.pytester import RunResult
+from _pytest.logging import LogCaptureFixture
+
+
 from aioresponses import aioresponses
 
 import rasa.utils.io as io_utils
 from rasa.cli import x
 from rasa.utils.endpoints import EndpointConfig
+from rasa.core.utils import AvailableEndpoints
 
 
-def test_x_help(run):
+def test_x_help(run: Callable[..., RunResult]):
     output = run("x", "--help")
 
-    help_text = """usage: rasa x [-h] [-v] [-vv] [--quiet] [-m MODEL] [--data DATA] [--no-prompt]
-              [--production] [--rasa-x-port RASA_X_PORT]
+    help_text = """usage: rasa x [-h] [-v] [-vv] [--quiet] [-m MODEL] [--data DATA] [-c CONFIG]
+              [--no-prompt] [--production] [--rasa-x-port RASA_X_PORT]
               [--config-endpoint CONFIG_ENDPOINT] [--log-file LOG_FILE]
               [--endpoints ENDPOINTS] [-p PORT] [-t AUTH_TOKEN]
               [--cors [CORS [CORS ...]]] [--enable-api]
               [--remote-storage REMOTE_STORAGE]
               [--ssl-certificate SSL_CERTIFICATE] [--ssl-keyfile SSL_KEYFILE]
-              [--ssl-password SSL_PASSWORD] [--credentials CREDENTIALS]
-              [--connector CONNECTOR] [--jwt-secret JWT_SECRET]
-              [--jwt-method JWT_METHOD]"""
+              [--ssl-ca-file SSL_CA_FILE] [--ssl-password SSL_PASSWORD]
+              [--credentials CREDENTIALS] [--connector CONNECTOR]
+              [--jwt-secret JWT_SECRET] [--jwt-method JWT_METHOD]"""
 
     lines = help_text.split("\n")
 
@@ -26,9 +35,8 @@ def test_x_help(run):
         assert output.outlines[i] == line
 
 
-def test_prepare_credentials_for_rasa_x_if_rasa_channel_not_given(tmpdir_factory):
-    directory = tmpdir_factory.mktemp("directory")
-    credentials_path = str(directory / "credentials.yml")
+def test_prepare_credentials_for_rasa_x_if_rasa_channel_not_given(tmpdir: Path):
+    credentials_path = str(tmpdir / "credentials.yml")
 
     io_utils.write_yaml_file({}, credentials_path)
 
@@ -41,9 +49,8 @@ def test_prepare_credentials_for_rasa_x_if_rasa_channel_not_given(tmpdir_factory
     assert actual["rasa"]["url"] == "http://localhost:5002"
 
 
-def test_prepare_credentials_if_already_valid(tmpdir_factory):
-    directory = tmpdir_factory.mktemp("directory")
-    credentials_path = str(directory / "credentials.yml")
+def test_prepare_credentials_if_already_valid(tmpdir: Path):
+    credentials_path = str(tmpdir / "credentials.yml")
 
     credentials = {
         "rasa": {"url": "my-custom-url"},
@@ -72,9 +79,45 @@ def test_if_endpoint_config_is_valid_in_local_mode():
         {"type": "sql", "dialect": "sqlite", "db": "some.db"},
     ],
 )
-def test_if_endpoint_config_is_invalid_in_local_mode(kwargs):
+def test_if_endpoint_config_is_invalid_in_local_mode(kwargs: Dict):
     config = EndpointConfig(**kwargs)
     assert not x._is_correct_event_broker(config)
+
+
+def test_overwrite_model_server_url():
+    endpoint_config = EndpointConfig(url="http://testserver:5002/models/default@latest")
+    endpoints = AvailableEndpoints(model=endpoint_config)
+    with pytest.warns(UserWarning):
+        x._overwrite_endpoints_for_local_x(endpoints, "test", "http://localhost")
+    assert (
+        endpoints.model.url == "http://localhost/projects/default/models/tag/production"
+    )
+
+
+def test_reuse_wait_time_between_pulls():
+    test_wait_time = 5
+    endpoint_config = EndpointConfig(
+        url="http://localhost:5002/models/default@latest",
+        wait_time_between_pulls=test_wait_time,
+    )
+    endpoints = AvailableEndpoints(model=endpoint_config)
+    assert endpoints.model.kwargs["wait_time_between_pulls"] == test_wait_time
+
+
+def test_default_wait_time_between_pulls():
+    endpoint_config = EndpointConfig(url="http://localhost:5002/models/default@latest")
+    endpoints = AvailableEndpoints(model=endpoint_config)
+    x._overwrite_endpoints_for_local_x(endpoints, "test", "http://localhost")
+    assert endpoints.model.kwargs["wait_time_between_pulls"] == 2
+
+
+def test_default_model_server_url():
+    endpoint_config = EndpointConfig()
+    endpoints = AvailableEndpoints(model=endpoint_config)
+    x._overwrite_endpoints_for_local_x(endpoints, "test", "http://localhost")
+    assert (
+        endpoints.model.url == "http://localhost/projects/default/models/tag/production"
+    )
 
 
 async def test_pull_runtime_config_from_server():
